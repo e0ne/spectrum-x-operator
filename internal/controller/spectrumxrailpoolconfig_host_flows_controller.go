@@ -93,8 +93,9 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) Reconcile(ctx context.Conte
 	log := log.FromContext(ctx)
 
 	if !controllerutil.ContainsFinalizer(rpc, finalizerName) {
+		patch := client.MergeFrom(rpc.DeepCopy())
 		controllerutil.AddFinalizer(rpc, finalizerName)
-		return ctrl.Result{}, r.Client.Update(ctx, rpc)
+		return ctrl.Result{}, r.Client.Patch(ctx, rpc, patch)
 	}
 
 	if !rpc.DeletionTimestamp.IsZero() {
@@ -104,8 +105,9 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) Reconcile(ctx context.Conte
 				return ctrl.Result{}, err
 			}
 		}
+		patch := client.MergeFrom(rpc.DeepCopy())
 		controllerutil.RemoveFinalizer(rpc, finalizerName)
-		return ctrl.Result{}, r.Client.Update(ctx, rpc)
+		return ctrl.Result{}, r.Client.Patch(ctx, rpc, patch)
 	}
 
 	if rpc.Status.SyncStatus != v1alpha1.SyncStatusInProgress {
