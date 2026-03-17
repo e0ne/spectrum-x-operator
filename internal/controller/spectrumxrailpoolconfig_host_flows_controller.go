@@ -113,6 +113,7 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) Reconcile(ctx context.Conte
 		if err := r.Client.Status().Update(ctx, rpc); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to set SyncStatus to InProgress: %w", err)
 		}
+		return ctrl.Result{}, nil
 	}
 
 	if len(rpc.Spec.RailTopology) < 1 {
