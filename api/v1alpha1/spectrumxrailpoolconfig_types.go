@@ -20,26 +20,45 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// +kubebuilder:validation:XValidation:rule="!has(self.cidrPoolRef) || !has(self.ipam)",message="Only one of cidrPoolRef or ipam can be specified"
+type RailTopology struct {
+	// Rail topo;logy name
+	Name string `json:"name"`
+	// PF selector
+	PfNames []string `json:"pfNames"`
+	// Reference to a CIDR Pool resource
+	CidrPoolRef string `json:"cidrPoolRef,omitempty"`
+	// Advanced IPAM configuration
+	IPAM string `json:"ipam,omitempty"`
+	// MTU
+	MTU int `json:"mtu"`
+}
+
+// +kubebuilder:validation:XValidation:rule="!has(self.cidrPoolRef) || !has(self.ipam)",message="Only one of cidrPoolRef or ipam can be specified"
 // SpectrumXRailPoolConfigSpec defines the desired state of SpectrumXRailPoolConfig.
 type SpectrumXRailPoolConfigSpec struct {
 	// Type of the pool config
-	// +kubebuilder:validation:Enum=none;swplb;hwplb;uniplane
-	// +kubebuilder:validation:Required
-	MultiplaneMode string `json:"multiplaneMode"`
-
-	// Reference to a SriovNetworkNodePolicy resource
-	// +kubebuilder:validation:Required
-	SriovNetworkNodePolicyRef string `json:"sriovNetworkNodePolicyRef"`
-
-	// Reference to a CIDR Pool resource
-	// +kubebuilder:validation:Required
-	CidrPoolRef string `json:"cidrPoolRef"`
+	// +kubebuilder:default:=false
+	WithBCM bool `json:"withBCM,omitempty"`
+	// +kubebuilder:default:=true
+	DraEnabled bool `json:"draEnabled,omitempty"`
+	// +kubebuilder:validation:Optional
+	// NodeSelector specifies a selector for installation of NVIDIA driver
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// Namespace of the NetworkAttachmentDefinition custom resource
+	NetworkNamespace string `json:"networkNamespace,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	// Number of VFs for each PF
+	NumVfs int `json:"numVfs"`
+	// Rails topology list
+	RailTopology []RailTopology `json:"railTopology,omitempty"`
 }
 
 // SpectrumXRailPoolConfigStatus defines the observed state of SpectrumXRailPoolConfig.
 type SpectrumXRailPoolConfigStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	SyncStatus string `json:"syncStatus,omitempty"`
 }
 
 // +kubebuilder:object:root=true
