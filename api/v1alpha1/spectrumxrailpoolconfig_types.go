@@ -34,7 +34,6 @@ type RailTopology struct {
 	MTU int `json:"mtu"`
 }
 
-// +kubebuilder:validation:XValidation:rule="!has(self.cidrPoolRef) || !has(self.ipam)",message="Only one of cidrPoolRef or ipam can be specified"
 // SpectrumXRailPoolConfigSpec defines the desired state of SpectrumXRailPoolConfig.
 type SpectrumXRailPoolConfigSpec struct {
 	// Type of the pool config
