@@ -43,6 +43,8 @@ const SpectrumXRailPoolConfigControllerName = "SpectrumXRailPoolConfigController
 
 const (
 	sriovNodePolicyType     = "SriovNetworkNodePolicy"
+	sriovNetworkPoolConfig  = "SriovNetworkPoolConfig"
+	sriovOVSNetworkType     = "OVSNetwork"
 	ovsDataPathType         = "netdev"
 	ovsNetworkInterfaceType = "dpdk"
 )
@@ -66,6 +68,8 @@ func NewSpectrumXRailPoolConfigHostFlowsReconciler(
 // +kubebuilder:rbac:groups=spectrumx.nvidia.com,resources=spectrumxrailpoolconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=spectrumx.nvidia.com,resources=spectrumxrailpoolconfigs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=sriovnetwork.openshift.io,resources=sriovnetworknodepolicies,verbs=create;patch;get;list;watch;update;delete
+// +kubebuilder:rbac:groups=sriovnetwork.openshift.io,resources=sriovnetworkpoolconfigs,verbs=create;patch;get;list;watch;update;delete
+// +kubebuilder:rbac:groups=sriovnetwork.openshift.io,resources=ovsnetworks,verbs=create;patch;get;list;watch;update;delete
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -85,7 +89,7 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) Reconcile(ctx context.Conte
 	}
 
 	for _, rt := range rpc.Spec.RailTopology {
-		err := r.reconcileRailTopology(&rpc.Spec, rt)
+		err := r.reconcileRailTopology(&rpc.Spec, rt, rpc.Namespace)
 		if err != nil {
 			log.Error(err, "failed to reconcile rail topology", "rail topology", rt)
 			return ctrl.Result{}, err
@@ -151,24 +155,42 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) Reconcile(ctx context.Conte
 	return ctrl.Result{}, nil
 }
 
-func (r *SpectrumXRailPoolConfigHostFlowsReconciler) reconcileRailTopology(spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt v1alpha1.RailTopology) error {
+func (r *SpectrumXRailPoolConfigHostFlowsReconciler) reconcileRailTopology(spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt v1alpha1.RailTopology, namespace string) error {
 	ctx := context.TODO()
 	if len(rt.NicSelector.PfNames) == 0 {
 		return fmt.Errorf("no PF names are cpecified in rail topology")
 	}
 
-	if len(rt.NicSelector.PfNames) == 1 {
-		// sw plw or no multiplane
-		policy := r.generateSRIOVNetworkNodePolicy(spec, &rt, true)
-
-		if err := r.Client.Patch(ctx, policy, client.Apply, client.ForceOwnership, client.FieldOwner(SpectrumXRailPoolConfigControllerName)); err != nil {
-			return fmt.Errorf("error while patching %s %s: %w", policy.GetObjectKind().GroupVersionKind().String(), client.ObjectKeyFromObject(policy), err)
-		}
+	poolConfig := r.generateSRIOVNetworkPoolConfig(spec, &rt, namespace)
+	poolConfig.SetGroupVersionKind(sriovv1.GroupVersion.WithKind(sriovNetworkPoolConfig))
+	if err := r.Client.Patch(ctx, poolConfig, client.Apply, client.ForceOwnership, client.FieldOwner(SpectrumXRailPoolConfigControllerName)); err != nil {
+		return fmt.Errorf("error while patching %s %s: %w", poolConfig.GetObjectKind().GroupVersionKind().String(), client.ObjectKeyFromObject(poolConfig), err)
 	}
+
+	var policy *sriovv1.SriovNetworkNodePolicy
+	if len(rt.NicSelector.PfNames) == 1 {
+		// sw plb or no multiplane
+		policy = r.generateSRIOVNetworkNodePolicy(spec, &rt, true, namespace)
+	} else {
+		// hw multiplane
+		policy = r.generateSRIOVNetworkNodePolicy(spec, &rt, false, namespace)
+	}
+
+	if err := r.Client.Patch(ctx, policy, client.Apply, client.ForceOwnership, client.FieldOwner(SpectrumXRailPoolConfigControllerName)); err != nil {
+		return fmt.Errorf("error while patching %s %s: %w", policy.GetObjectKind().GroupVersionKind().String(), client.ObjectKeyFromObject(policy), err)
+	}
+
+	addBridge := len(rt.NicSelector.PfNames) == 1
+	ovsNetwork := r.generateOVSNetwork(spec, &rt, addBridge, namespace)
+	ovsNetwork.SetGroupVersionKind(sriovv1.GroupVersion.WithKind(sriovOVSNetworkType))
+	if err := r.Client.Patch(ctx, ovsNetwork, client.Apply, client.ForceOwnership, client.FieldOwner(SpectrumXRailPoolConfigControllerName)); err != nil {
+		return fmt.Errorf("error while patching %s %s: %w", ovsNetwork.GetObjectKind().GroupVersionKind().String(), client.ObjectKeyFromObject(ovsNetwork), err)
+	}
+
 	return nil
 }
 
-func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkPoolConfig(spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt *v1alpha1.RailTopology) *sriovv1.SriovNetworkPoolConfig {
+func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkPoolConfig(spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt *v1alpha1.RailTopology, namespace string) *sriovv1.SriovNetworkPoolConfig {
 	nodeSelector := &metav1.LabelSelector{
 		MatchLabels: spec.NodeSelector,
 	}
@@ -176,11 +198,11 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkPoolCon
 	nodePool := &sriovv1.SriovNetworkPoolConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      rt.Name,
-			Namespace: spec.NetworkNamespace,
+			Namespace: namespace,
 		},
 		Spec: sriovv1.SriovNetworkPoolConfigSpec{
-			NodeSelector:             nodeSelector,
-			RdmaMode:                 "exclusive",
+			NodeSelector: nodeSelector,
+			RdmaMode:     "exclusive",
 			OvsHardwareOffloadConfig: sriovv1.OvsHardwareOffloadConfig{
 				// TODO: otherConfig option
 			},
@@ -190,7 +212,7 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkPoolCon
 	return nodePool
 }
 
-func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkNodePolicy(spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt *v1alpha1.RailTopology, generateBridge bool) *sriovv1.SriovNetworkNodePolicy {
+func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkNodePolicy(spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt *v1alpha1.RailTopology, generateBridge bool, namespace string) *sriovv1.SriovNetworkNodePolicy {
 	nicSelector := &sriovv1.SriovNetworkNicSelector{
 		PfNames: rt.NicSelector.PfNames,
 	}
@@ -199,7 +221,7 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkNodePol
 	nodePolicy := &sriovv1.SriovNetworkNodePolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      rt.Name,
-			Namespace: spec.NetworkNamespace,
+			Namespace: namespace,
 		},
 		// According to NVIDIA Spectrum-X architecture we need only VF per PF to be created
 		// which would be used for GPU to GPU traffic so IsRDMA flag is required
@@ -242,8 +264,12 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkNodePol
 	return nodePolicy
 }
 
-func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetwork(spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt *v1alpha1.RailTopology, addBridge bool) *sriovv1.OVSNetwork {
+func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateOVSNetwork(spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt *v1alpha1.RailTopology, addBridge bool, namespace string) *sriovv1.OVSNetwork {
 	ovsNetwork := &sriovv1.OVSNetwork{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      rt.Name,
+			Namespace: namespace,
+		},
 		Spec: sriovv1.OVSNetworkSpec{
 			ResourceName:     rt.Name,
 			InterfaceType:    ovsNetworkInterfaceType,
