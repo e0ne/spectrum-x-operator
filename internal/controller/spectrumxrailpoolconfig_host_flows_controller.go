@@ -77,6 +77,7 @@ func NewSpectrumXRailPoolConfigHostFlowsReconciler(
 // +kubebuilder:rbac:groups=sriovnetwork.openshift.io,resources=sriovnetworknodepolicies,verbs=create;patch;get;list;watch;update;delete
 // +kubebuilder:rbac:groups=sriovnetwork.openshift.io,resources=sriovnetworkpoolconfigs,verbs=create;patch;get;list;watch;update;delete
 // +kubebuilder:rbac:groups=sriovnetwork.openshift.io,resources=ovsnetworks,verbs=create;patch;get;list;watch;update;delete
+// +kubebuilder:rbac:groups=sriovnetwork.openshift.io,resources=sriovnetworknodestates,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -107,6 +108,13 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) Reconcile(ctx context.Conte
 		return ctrl.Result{}, r.Client.Update(ctx, rpc)
 	}
 
+	if rpc.Status.SyncStatus != v1alpha1.SyncStatusInProgress {
+		rpc.Status.SyncStatus = v1alpha1.SyncStatusInProgress
+		if err := r.Client.Status().Update(ctx, rpc); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to set SyncStatus to InProgress: %w", err)
+		}
+	}
+
 	if len(rpc.Spec.RailTopology) < 1 {
 		return ctrl.Result{}, fmt.Errorf("expected one or more rail topologies to be specified")
 	}
@@ -121,6 +129,11 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) Reconcile(ctx context.Conte
 
 	if err := r.deleteRemovedRailTopologies(ctx, rpc); err != nil {
 		log.Error(err, "failed to delete removed rail topologies")
+		return ctrl.Result{}, err
+	}
+
+	if err := r.updateSyncStatus(ctx, rpc); err != nil {
+		log.Error(err, "failed to update sync status")
 		return ctrl.Result{}, err
 	}
 
@@ -265,6 +278,35 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) deleteRemovedRailTopologies
 	}
 
 	return nil
+}
+
+func (r *SpectrumXRailPoolConfigHostFlowsReconciler) updateSyncStatus(ctx context.Context, rpc *v1alpha1.SpectrumXRailPoolConfig) error {
+	nodeList := &v1.NodeList{}
+	if err := r.Client.List(ctx, nodeList, client.MatchingLabels(rpc.Spec.NodeSelector)); err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	newStatus := v1alpha1.SyncStatusInProgress
+	for _, node := range nodeList.Items {
+		nodeState := &sriovv1.SriovNetworkNodeState{}
+		nsn := types.NamespacedName{Name: node.Name, Namespace: rpc.Namespace}
+		if err := r.Client.Get(ctx, nsn, nodeState); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("failed to get SriovNetworkNodeState for node %s: %w", node.Name, err)
+		}
+		if nodeState.Status.SyncStatus == v1alpha1.SyncStatusFailed {
+			newStatus = v1alpha1.SyncStatusFailed
+			break
+		}
+	}
+
+	if rpc.Status.SyncStatus == newStatus {
+		return nil
+	}
+	rpc.Status.SyncStatus = newStatus
+	return r.Client.Status().Update(ctx, rpc)
 }
 
 func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkPoolConfig(spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt *v1alpha1.RailTopology, namespace string) *sriovv1.SriovNetworkPoolConfig {

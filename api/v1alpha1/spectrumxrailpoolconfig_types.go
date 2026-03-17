@@ -20,6 +20,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	SyncStatusUnknown    = "Unknown"
+	SyncStatusInProgress = "InProgress"
+	SyncStatusFailed     = "Failed"
+)
+
 type NicSelector struct {
 	// PF selector
 	PfNames []string `json:"pfNames"`
