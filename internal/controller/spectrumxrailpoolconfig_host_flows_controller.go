@@ -109,8 +109,9 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) Reconcile(ctx context.Conte
 	}
 
 	if rpc.Status.SyncStatus != v1alpha1.SyncStatusInProgress {
+		patch := client.MergeFrom(rpc.DeepCopy())
 		rpc.Status.SyncStatus = v1alpha1.SyncStatusInProgress
-		if err := r.Client.Status().Update(ctx, rpc); err != nil {
+		if err := r.Client.Status().Patch(ctx, rpc, patch); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to set SyncStatus to InProgress: %w", err)
 		}
 		return ctrl.Result{}, nil
@@ -306,8 +307,9 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) updateSyncStatus(ctx contex
 	if rpc.Status.SyncStatus == newStatus {
 		return nil
 	}
+	patch := client.MergeFrom(rpc.DeepCopy())
 	rpc.Status.SyncStatus = newStatus
-	return r.Client.Status().Update(ctx, rpc)
+	return r.Client.Status().Patch(ctx, rpc, patch)
 }
 
 func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkPoolConfig(spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt *v1alpha1.RailTopology, namespace string) *sriovv1.SriovNetworkPoolConfig {
