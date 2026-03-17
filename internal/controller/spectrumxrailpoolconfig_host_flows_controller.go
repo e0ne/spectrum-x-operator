@@ -65,7 +65,7 @@ func NewSpectrumXRailPoolConfigHostFlowsReconciler(
 
 // +kubebuilder:rbac:groups=spectrumx.nvidia.com,resources=spectrumxrailpoolconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=spectrumx.nvidia.com,resources=spectrumxrailpoolconfigs/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=sriovnetwork.openshift.io,resources=sriovnetworknodepolicies,verbs=create;get;list;watch
+// +kubebuilder:rbac:groups=sriovnetwork.openshift.io,resources=sriovnetworknodepolicies,verbs=create;patch;get;list;watch
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -153,11 +153,11 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) Reconcile(ctx context.Conte
 
 func (r *SpectrumXRailPoolConfigHostFlowsReconciler) reconcileRailTopology(spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt v1alpha1.RailTopology) error {
 	ctx := context.TODO()
-	if len(rt.PfNames) == 0 {
+	if len(rt.NicSelector.PfNames) == 0 {
 		return fmt.Errorf("no PF names are cpecified in rail topology")
 	}
 
-	if len(rt.PfNames) == 1 {
+	if len(rt.NicSelector.PfNames) == 1 {
 		// sw plw or no multiplane
 		policy := r.generateSRIOVNetworkNodePolicy(spec, &rt, true)
 
@@ -192,7 +192,7 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkPoolCon
 
 func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkNodePolicy(spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt *v1alpha1.RailTopology, generateBridge bool) *sriovv1.SriovNetworkNodePolicy {
 	nicSelector := &sriovv1.SriovNetworkNicSelector{
-		PfNames: rt.PfNames,
+		PfNames: rt.NicSelector.PfNames,
 	}
 	nodeSelector := spec.NodeSelector
 

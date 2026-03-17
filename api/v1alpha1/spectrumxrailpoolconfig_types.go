@@ -20,12 +20,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type NicSelector struct {
+	// PF selector
+	PfNames []string `json:"pfNames"`
+}
+
 // +kubebuilder:validation:XValidation:rule="!has(self.cidrPoolRef) || !has(self.ipam)",message="Only one of cidrPoolRef or ipam can be specified"
 type RailTopology struct {
 	// Rail topo;logy name
 	Name string `json:"name"`
 	// PF selector
-	PfNames []string `json:"pfNames"`
+	NicSelector NicSelector `json:"nicSelector"`
 	// Reference to a CIDR Pool resource
 	CidrPoolRef string `json:"cidrPoolRef,omitempty"`
 	// Advanced IPAM configuration
