@@ -226,10 +226,13 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) reconcileRailTopology(spec 
 	var policy *sriovv1.SriovNetworkNodePolicy
 	if len(rt.NicSelector.PfNames) == 1 {
 		// sw plb or no multiplane
-		policy = r.generateSRIOVNetworkNodePolicy(spec, &rt, true, namespace)
+		policy = r.generateSRIOVNetworkNodePolicy(spec, &rt, false, namespace)
 	} else {
 		// hw multiplane
-		policy = r.generateSRIOVNetworkNodePolicy(spec, &rt, false, namespace)
+		policy = r.generateSRIOVNetworkNodePolicy(spec, &rt, true, namespace)
+		if err := r.configureXPlane(ctx, spec, &rt, namespace); err != nil {
+			return fmt.Errorf("failed to configure xplane for rail topology %s: %w", rt.Name, err)
+		}
 	}
 	policy.Labels = ownerLabels
 
@@ -245,6 +248,30 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) reconcileRailTopology(spec 
 		return fmt.Errorf("error while patching %s %s: %w", ovsNetwork.GetObjectKind().GroupVersionKind().String(), client.ObjectKeyFromObject(ovsNetwork), err)
 	}
 
+	return nil
+}
+
+func (r *SpectrumXRailPoolConfigHostFlowsReconciler) configureXPlane(ctx context.Context, spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt *v1alpha1.RailTopology, namespace string) error {
+	nodeList := &v1.NodeList{}
+	if err := r.Client.List(ctx, nodeList, client.MatchingLabels(spec.NodeSelector)); err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	for _, node := range nodeList.Items {
+		nodeState := &sriovv1.SriovNetworkNodeState{}
+		nsn := types.NamespacedName{Name: node.Name, Namespace: namespace}
+		if err := r.Client.Get(ctx, nsn, nodeState); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("failed to get SriovNetworkNodeState for node %s: %w", node.Name, err)
+		}
+		if nodeState.Status.SyncStatus != v1alpha1.SyncStatusSucceeded {
+			return nil
+		}
+	}
+
+	// all nodes are Succeeded, proceed with xplane configuration
 	return nil
 }
 
@@ -350,7 +377,7 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkPoolCon
 	return nodePool
 }
 
-func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkNodePolicy(spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt *v1alpha1.RailTopology, generateBridge bool, namespace string) *sriovv1.SriovNetworkNodePolicy {
+func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkNodePolicy(spec *v1alpha1.SpectrumXRailPoolConfigSpec, rt *v1alpha1.RailTopology, hardwarePLB bool, namespace string) *sriovv1.SriovNetworkNodePolicy {
 	nicSelector := &sriovv1.SriovNetworkNicSelector{
 		PfNames: rt.NicSelector.PfNames,
 	}
@@ -377,7 +404,7 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkNodePol
 			//Bridge: nil,
 		},
 	}
-	if generateBridge {
+	if !hardwarePLB {
 		bridge := &sriovv1.Bridge{
 			OVS: &sriovv1.OVSConfig{
 
