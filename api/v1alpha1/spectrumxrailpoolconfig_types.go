@@ -24,6 +24,7 @@ const (
 	SyncStatusUnknown    = "Unknown"
 	SyncStatusInProgress = "InProgress"
 	SyncStatusFailed     = "Failed"
+	SyncStatusSucceeded  = "Succeeded"
 )
 
 type NicSelector struct {

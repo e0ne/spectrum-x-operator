@@ -90,6 +90,14 @@ func NewSpectrumXRailPoolConfigHostFlowsReconciler(
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/reconcile
 func (r *SpectrumXRailPoolConfigHostFlowsReconciler) Reconcile(ctx context.Context, rpc *v1alpha1.SpectrumXRailPoolConfig) (ctrl.Result, error) {
+	result, err := r.doReconcile(ctx, rpc)
+	if apierrors.IsConflict(err) {
+		return ctrl.Result{Requeue: true}, nil
+	}
+	return result, err
+}
+
+func (r *SpectrumXRailPoolConfigHostFlowsReconciler) doReconcile(ctx context.Context, rpc *v1alpha1.SpectrumXRailPoolConfig) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
 	if !controllerutil.ContainsFinalizer(rpc, finalizerName) {
@@ -290,7 +298,7 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) updateSyncStatus(ctx contex
 		return fmt.Errorf("failed to list nodes: %w", err)
 	}
 
-	newStatus := v1alpha1.SyncStatusInProgress
+	newStatus := v1alpha1.SyncStatusSucceeded
 	for _, node := range nodeList.Items {
 		nodeState := &sriovv1.SriovNetworkNodeState{}
 		nsn := types.NamespacedName{Name: node.Name, Namespace: rpc.Namespace}
@@ -300,12 +308,18 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) updateSyncStatus(ctx contex
 			}
 			return fmt.Errorf("failed to get SriovNetworkNodeState for node %s: %w", node.Name, err)
 		}
-		if nodeState.Status.SyncStatus == v1alpha1.SyncStatusFailed {
-			newStatus = v1alpha1.SyncStatusFailed
-			break
+		switch nodeState.Status.SyncStatus {
+		case v1alpha1.SyncStatusFailed:
+			return r.patchSyncStatus(ctx, rpc, v1alpha1.SyncStatusFailed)
+		case v1alpha1.SyncStatusInProgress:
+			newStatus = v1alpha1.SyncStatusInProgress
 		}
 	}
 
+	return r.patchSyncStatus(ctx, rpc, newStatus)
+}
+
+func (r *SpectrumXRailPoolConfigHostFlowsReconciler) patchSyncStatus(ctx context.Context, rpc *v1alpha1.SpectrumXRailPoolConfig, newStatus string) error {
 	if rpc.Status.SyncStatus == newStatus {
 		return nil
 	}
@@ -325,8 +339,8 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) generateSRIOVNetworkPoolCon
 			Namespace: namespace,
 		},
 		Spec: sriovv1.SriovNetworkPoolConfigSpec{
-			NodeSelector: nodeSelector,
-			RdmaMode:     "exclusive",
+			NodeSelector:             nodeSelector,
+			RdmaMode:                 "exclusive",
 			OvsHardwareOffloadConfig: sriovv1.OvsHardwareOffloadConfig{
 				// TODO: otherConfig option
 			},
