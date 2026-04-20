@@ -420,7 +420,6 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) createXPlaneBridges(ctx con
 		iface := &nodeState.Status.Interfaces[i]
 		ifaceByName[iface.Name] = iface
 	}
-
 	pfNames, err := lib.FilterNICs(ctx, rt.NicSelector.PfNames)
 	if err != nil {
 		return fmt.Errorf("failed to filter NICSs for specified selector: %w", err)
@@ -435,6 +434,13 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) createXPlaneBridges(ctx con
 			brName, brName, ovsDataPathType,
 		)); err != nil {
 			return fmt.Errorf("failed to create bridge %s: %w", brName, err)
+		}
+
+		if _, err := r.exec.Execute(fmt.Sprintf(
+			"ovs-vsctl --may-exist add-port %s %s -- set port %s external-ids:xplane-uplink=true external-ids:xplane-plane-id=%d external-ids:xplane-group-id=%s",
+			brName, pfName, pfName, idx, rt.Name,
+		)); err != nil {
+			return fmt.Errorf("failed to add port %s to bridge %s: %w", pfName, brName, err)
 		}
 	}
 
@@ -454,15 +460,17 @@ func (r *SpectrumXRailPoolConfigHostFlowsReconciler) createXPlaneBridges(ctx con
 		patchRailPort := fmt.Sprintf("patch-%s-%d-to-xplane", pfName, idx)
 
 		if _, err := r.exec.Execute(fmt.Sprintf(
-			"ovs-vsctl --may-exist add-port %s %s -- set interface %s type=patch options:peer=%s",
-			xplaneBridge, patchXplanePort, patchXplanePort, patchRailPort,
+			"ovs-vsctl --may-exist add-port %s %s -- set interface %s type=patch options:peer=%s"+
+				" -- set port %s external-ids:xplane-downlink=patch external-ids:xplane-group-id=%s",
+			xplaneBridge, patchXplanePort, patchXplanePort, patchRailPort, patchXplanePort, rt.Name,
 		)); err != nil {
 			return fmt.Errorf("failed to add patch port %s to bridge %s: %w", patchXplanePort, xplaneBridge, err)
 		}
 
 		if _, err := r.exec.Execute(fmt.Sprintf(
-			"ovs-vsctl --may-exist add-port %s %s -- set interface %s type=patch options:peer=%s",
-			railBridge, patchRailPort, patchRailPort, patchXplanePort,
+			"ovs-vsctl --may-exist add-port %s %s -- set interface %s type=patch options:peer=%s"+
+				" -- set port %s external-ids:xplane-downlink=patch external-ids:xplane-group-id=%s",
+			railBridge, patchRailPort, patchRailPort, patchXplanePort, patchRailPort, rt.Name,
 		)); err != nil {
 			return fmt.Errorf("failed to add patch port %s to bridge %s: %w", patchRailPort, railBridge, err)
 		}
